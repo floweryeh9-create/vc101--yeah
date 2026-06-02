@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>不愛我的他 - 音樂與生成影像</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: 'Noto Sans TC', sans-serif;
+            background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), transparent 35%),
+                        radial-gradient(circle at bottom right, rgba(124, 58, 237, 0.18), transparent 30%),
+                        #050816;
+            color: #f8fafc;
+        }
+        .page-shell {
+            padding: 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .hero {
+            display: grid;
+            gap: 24px;
+        }
+        .hero-header {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: flex-start;
+        }
+        .hero-header h1 {
+            margin: 0;
+            font-size: clamp(2rem, 3vw, 3.2rem);
+            letter-spacing: 0.02em;
+        }
+        .hero-header p {
+            margin: 0;
+            color: #cbd5e1;
+            max-width: 760px;
+            line-height: 1.7;
+        }
+        .player-card {
+            display: grid;
+            grid-template-columns: 1.1fr 0.9fr;
+            gap: 24px;
+            align-items: start;
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.35);
+        }
+        .audio-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .audio-panel h2 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        .audio-panel .description {
+            color: #94a3b8;
+            line-height: 1.75;
+        }
+        .audio-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 18px;
+            padding: 18px;
+        }
+        audio {
+            width: 100%;
+            accent-color: #7c3aed;
+        }
+        .canvas-wrapper {
+            position: relative;
+            min-height: 420px;
+            border-radius: 24px;
+            overflow: hidden;
+            background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(15, 23, 42, 0.9));
+            box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+        }
+        .canvas-wrapper img {
+            width: 100%;
+            height: auto;
+            display: block;
+            object-fit: cover;
+            filter: saturate(1.1) contrast(1.05);
+        }
+        .visual-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.1), rgba(15, 23, 42, 0.7));
+        }
+        .capture {
+            position: absolute;
+            left: 24px;
+            bottom: 24px;
+            background: rgba(15, 23, 42, 0.72);
+            backdrop-filter: blur(12px);
+            padding: 14px 18px;
+            border-radius: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+        }
+        .capture h3 {
+            margin: 0 0 4px;
+            font-size: 1.1rem;
+        }
+        .capture p {
+            margin: 0;
+            color: #cbd5e1;
+            font-size: 0.95rem;
+        }
+        canvas {
+            position: absolute;
+            inset: 0;
+        }
+        @media (max-width: 900px) {
+            .player-card {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="page-shell">
+        <section class="hero">
+            <div class="hero-header">
+                <h1>不愛我的他</h1>
+            </div>
+
+            <div class="player-card">
+                <div class="audio-panel">
+                    <h2>播放音樂</h2>
+
+                    <div class="audio-controls">
+                        <audio id="music" controls preload="auto" src="不愛我的他.mp3"></audio>
+                        <button id="startButton">啟動視覺特效</button>
+                        <p style="margin:0;color:#94a3b8;">若瀏覽器禁止自動播放，請先按一次播放按鈕，再按「啟動視覺特效」。</p>
+                    </div>
+                </div>
+
+                <div class="canvas-wrapper">
+                    <canvas id="waveCanvas"></canvas>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const audioElement = document.getElementById('music');
+        const startButton = document.getElementById('startButton');
+        
+        // Export button to generate a video file (WebM) combining image + audio
+        const exportButton = document.createElement('button');
+        exportButton.id = 'exportButton';
+        exportButton.textContent = '匯出影片 (WebM)';
+        exportButton.style.padding = '8px 12px';
+        exportButton.style.borderRadius = '8px';
+        exportButton.style.border = 'none';
+        exportButton.style.background = '#7c3aed';
+        exportButton.style.color = '#fff';
+        exportButton.style.cursor = 'pointer';
+        exportButton.disabled = true;
+        const audioControls = document.querySelector('.audio-controls');
+        audioControls.insertBefore(exportButton, audioControls.children[1]);
+
+        const canvas = document.getElementById('waveCanvas');
+        const ctx = canvas.getContext('2d');
+        let analyser, dataArray, audioContext, source;
+        const bgImageSrc = 'ChatGPT Image 2026年6月1日 下午08_56_54.png';
+        const bgImage = new Image();
+        let bgLoaded = false;
+        bgImage.onload = () => { bgLoaded = true; resizeCanvas(); };
+        bgImage.src = bgImageSrc;
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+        }
+
+        function drawWave() {
+            requestAnimationFrame(drawWave);
+            if (!analyser) return;
+            analyser.getByteFrequencyData(dataArray);
+            // draw background image
+            if (bgLoaded) {
+                ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = '#0b1220';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // semi-transparent overlay
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const barWidth = canvas.width / dataArray.length;
+            for (let i = 0; i < dataArray.length; i++) {
+                const value = dataArray[i] / 255;
+                const barHeight = value * canvas.height * 0.9;
+                const x = i * barWidth;
+                const y = canvas.height - barHeight;
+                const hue = 220 + (i / dataArray.length) * 120;
+
+                ctx.fillStyle = `hsla(${hue}, 90%, 65%, 0.45)`;
+                ctx.fillRect(x, y, barWidth * 0.75, barHeight);
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / 2);
+            for (let i = 0; i < dataArray.length; i++) {
+                const x = (i / (dataArray.length - 1)) * canvas.width;
+                const y = (canvas.height / 2) + Math.sin(i * 0.25 + performance.now() * 0.005) * (dataArray[i] / 255) * 28;
+                ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function initAudio() {
+            if (audioContext) return;
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            source = audioContext.createMediaElementSource(audioElement);
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+            drawWave();
+            // enable export once audio + canvas ready
+            exportButton.disabled = false;
+        }
+
+        startButton.addEventListener('click', () => {
+            initAudio();
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            startButton.textContent = '視覺特效已啟動';
+            startButton.disabled = true;
+        });
+
+        // Export video by recording canvas + audio with MediaRecorder
+        exportButton.addEventListener('click', async () => {
+            if (!bgLoaded) {
+                alert('背景圖片尚未載入，請稍後再試。');
+                return;
+            }
+            initAudio();
+            try {
+                // prepare streams
+                const canvasStream = canvas.captureStream(30);
+                let audioStream = null;
+                if (audioElement.captureStream) audioStream = audioElement.captureStream();
+
+                const combined = new MediaStream();
+                canvasStream.getVideoTracks().forEach(t => combined.addTrack(t));
+                if (audioStream) audioStream.getAudioTracks().forEach(t => combined.addTrack(t));
+
+                const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+                let recorder;
+                try { recorder = new MediaRecorder(combined, options); }
+                catch (e) { recorder = new MediaRecorder(combined); }
+
+                const chunks = [];
+                recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+                recorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '不愛我的他_video.webm';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                    exportButton.textContent = '匯出影片 (完成)';
+                    exportButton.disabled = false;
+                };
+
+                exportButton.disabled = true;
+                exportButton.textContent = '錄製中...';
+
+                // play from start and record until audio ends
+                audioElement.currentTime = 0;
+                recorder.start();
+                await audioElement.play();
+
+                audioElement.onended = () => {
+                    if (recorder.state === 'recording') recorder.stop();
+                };
+            } catch (err) {
+                console.error(err);
+                alert('匯出失敗：' + (err.message || err));
+                exportButton.disabled = false;
+                exportButton.textContent = '匯出影片 (WebM)';
+            }
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>
